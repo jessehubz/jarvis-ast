@@ -1,53 +1,58 @@
 #!/usr/bin/env python3
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  JARVIS — Voice Activation Terminal Demo                                    ║
-║  Step 1 of the Jarvis macOS AI agent build                                  ║
+║  JARVIS — Voice Demo                                                         ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 
 WHAT THIS DOES
   1. Calibrates mic sensitivity at startup (1-second ambient noise reading)
   2. Listens continuously for the wake word "hey jarvis"
-  3. Once detected, shows a live ● REC spinner while recording your command
-  4. Runs your speech through Whisper (local AI) and prints the transcript
-  5. Say "thank you jarvis" to exit, or press Ctrl+C
+  3. Records your command/question until you go quiet
+  4. Transcribes speech → text with Whisper (local, free)
+  5. Sends the text to Ollama (local AI model, free, unlimited)
+  6. Streams Jarvis's response to the terminal word by word
+  7. Remembers the conversation so follow-up questions work
+  8. Say "thank you jarvis" to exit
 
 HOW TO RUN
-  python voice_demo.py
+  First-time setup:
+    brew install ollama
+    ollama pull llama3.2          # ~2 GB, good balance of speed and quality
+    ollama serve                  # start the Ollama server (keep this running)
+
+  Then in a new terminal:
+    source .venv/bin/activate
+    python voice_demo.py
 
 CONFIG  (edit .env to change these)
-  JARVIS_WAKE_WORD   which word triggers listening:
-                       hey_jarvis | alexa | hey_mycroft | ok_nabu
-                       default: hey_jarvis
+  JARVIS_WAKE_WORD   hey_jarvis | alexa | hey_mycroft | ok_nabu
+                     default: hey_jarvis
 
-  WHISPER_MODEL      transcription accuracy vs speed:
-                       tiny   → fastest  (~75 MB)
-                       base   → balanced (~145 MB)  ← default
-                       small  → better   (~460 MB)
-                       medium → best     (~1.5 GB)
+  OLLAMA_MODEL       any model you have pulled via "ollama pull <name>"
+                     default: llama3.2
+                     fast/small options: llama3.2:1b, mistral, phi3
 
-  WAKE_THRESHOLD     wake word sensitivity (0.0–1.0):
-                       lower  = triggers more easily (more false positives)
-                       higher = needs clearer speech (may miss quiet voices)
-                       default: 0.5
+  WHISPER_MODEL      tiny | base | small | medium
+                     default: base
 
-HOW THE CODE WORKS
-  Single audio stream, callback-based (not blocking reads):
-    - macOS only allows one input stream at a time, so we use one stream
-      with a state machine inside the callback instead of opening/closing streams
-    - "idle" state: every 80ms chunk is fed to openWakeWord for wake detection
-    - "recording" state: chunks accumulate; silence ends the recording
-    - Completed recordings go into msg_queue for the main thread to transcribe
+  WAKE_THRESHOLD     wake word sensitivity 0.0–1.0
+                     default: 0.5
 
-  Silence detection:
-    - At startup, we measure 1s of ambient noise and auto-set the threshold
-    - If your room noise is 0.02 RMS, threshold becomes ~0.05 (2.5× ambient)
-    - Without this, a fixed threshold like 0.015 would never detect silence
-      in a typical room, so recording would run until the 15-second hard cap
+HOW IT WORKS
+  One audio stream runs the entire time using a callback (never blocks):
+    - "idle" mode:     every 80ms chunk fed to openWakeWord for wake detection
+    - "recording" mode: chunks accumulate until silence or 15s cap
+    - finished recording goes into a queue for the main thread
+
+  Main thread loop:
+    wake message  → print ● REC, start spinner thread
+    audio message → stop spinner, transcribe (Whisper), ask Ollama, print response
+
+  Conversation history is kept in memory so Jarvis understands follow-ups like
+  "tell me more" or "what about the second one" without re-explaining context.
 
 EXIT
-  - Say "thank you jarvis" (punctuation-safe — Whisper's commas are stripped)
-  - Ctrl+C
+  Say "thank you jarvis"  or  press Ctrl+C
 """
 
 import os
@@ -63,6 +68,7 @@ import threading
 import numpy as np
 import sounddevice as sd
 import whisper
+import ollama
 import openwakeword
 from openwakeword.model import Model
 from dotenv import load_dotenv
@@ -76,20 +82,27 @@ load_dotenv()
 WAKE_WORD      = os.getenv("JARVIS_WAKE_WORD", "hey_jarvis")
 WHISPER_MODEL  = os.getenv("WHISPER_MODEL", "base")
 WAKE_THRESHOLD = float(os.getenv("WAKE_THRESHOLD", "0.5"))
+OLLAMA_MODEL   = os.getenv("OLLAMA_MODEL", "llama3.2")
 
-SAMPLE_RATE    = 16000   # Hz — must match openWakeWord's requirement
-CHUNK_SIZE     = 1280    # samples per chunk = 80ms @ 16 kHz (openWakeWord requirement)
+SAMPLE_RATE    = 16000
+CHUNK_SIZE     = 1280    # 80ms @ 16kHz — openWakeWord's required frame size
 SILENCE_SEC    = 1.5     # seconds of quiet that ends a recording
-MIN_SPEECH_SEC = 0.3     # recordings shorter than this are discarded
-MAX_RECORD_SEC = 15      # hard cap: stop recording even if silence never detected
+MIN_SPEECH_SEC = 0.3     # discard recordings shorter than this
+MAX_RECORD_SEC = 15      # hard cap if silence never detected
 
 EXIT_PHRASE    = "thank you jarvis"
 
 AVAILABLE_WORDS = ["hey_jarvis", "alexa", "hey_mycroft", "ok_nabu"]
 
-# Derived counts (computed once at module load)
 _SILENCE_CHUNKS = int(SILENCE_SEC * SAMPLE_RATE / CHUNK_SIZE)
 _MAX_CHUNKS     = int(MAX_RECORD_SEC * SAMPLE_RATE / CHUNK_SIZE)
+
+# Jarvis's personality — prepended to every conversation
+SYSTEM_PROMPT = (
+    "You are Jarvis, a concise and helpful personal AI assistant running locally on macOS. "
+    "Keep answers brief and conversational unless the user asks for detail. "
+    "Never say you're an AI or mention your model name."
+)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TERMINAL HELPERS
@@ -107,10 +120,7 @@ def style(text, *codes):
     return "".join(codes) + text + RESET
 
 def normalize(text: str) -> str:
-    """
-    Strip punctuation and lowercase so 'Thank you, Jarvis.' matches
-    'thank you jarvis'. Whisper almost always adds commas / periods.
-    """
+    """Strip punctuation + lowercase. Lets 'Thank you, Jarvis.' match 'thank you jarvis'."""
     return re.sub(r"[^a-z\s]", "", text.lower()).strip()
 
 def rms(audio: np.ndarray) -> float:
@@ -118,29 +128,26 @@ def rms(audio: np.ndarray) -> float:
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  MIC CALIBRATION
-#  Measures ambient noise for 1 second and returns a silence threshold that
-#  is 2.5× the room's background RMS — so real silence is always detectable.
+#  Records 1s of ambient noise to set a silence threshold that works in
+#  your actual room. Without this, a fixed threshold often misses silence
+#  (room noise > threshold) so recording runs to the 15s hard cap.
 # ══════════════════════════════════════════════════════════════════════════════
 
 def calibrate_silence() -> float:
-    """
-    Measure ambient noise for ~1 second using the callback API (never blocks).
-    Returns a silence threshold = 2.5 × ambient RMS, minimum 0.02.
-    """
     print(style("  Calibrating mic — stay quiet for 1 second…", DIM), flush=True)
 
     levels   = []
     done     = threading.Event()
-    n_chunks = max(1, int(SAMPLE_RATE / CHUNK_SIZE))  # ~12 chunks ≈ 1 second
+    n_chunks = max(1, int(SAMPLE_RATE / CHUNK_SIZE))
 
-    def _cal_cb(indata, _f, _t, _s):
+    def _cb(indata, _f, _t, _s):
         levels.append(rms(indata.flatten()))
         if len(levels) >= n_chunks:
             done.set()
 
     with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16",
-                        blocksize=CHUNK_SIZE, callback=_cal_cb):
-        done.wait(timeout=5.0)  # give up after 5 s if mic never fires
+                        blocksize=CHUNK_SIZE, callback=_cb):
+        done.wait(timeout=5.0)
 
     ambient   = float(np.mean(levels)) if levels else 0.03
     threshold = max(0.02, ambient * 2.5)
@@ -148,40 +155,34 @@ def calibrate_silence() -> float:
     return threshold
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  SHARED STATE  (audio callback ↔ main thread)
+#  SHARED STATE  (audio callback <-> main thread)
 # ══════════════════════════════════════════════════════════════════════════════
 
-#  ("wake",  score)          — wake word fired, confidence score 0–1
-#  ("audio", array, secs)    — recording done, raw int16 audio, duration in seconds
+#  ("wake",  score)        — wake word fired
+#  ("audio", array, secs)  — recording finished
 msg_queue  = queue.Queue()
 stop_event = threading.Event()
 
-# ── Audio callback state machine ──────────────────────────────────────────────
-# All fields are read/written ONLY inside audio_callback (callback thread).
 _cb = {
-    "mode":        "idle",   # "idle" | "recording"
-    "chunks":      [],       # audio chunks accumulated while recording
-    "silence_cnt": 0,        # consecutive quiet chunks
-    "last_trig":   0.0,      # timestamp of last wake trigger (cooldown)
-    "rec_start":   0.0,      # timestamp recording began
-    "silence_thr": 0.03,     # set by calibrate_silence() before stream opens
-    "oww":         None,     # openWakeWord model (set in main before stream opens)
+    "mode":        "idle",
+    "chunks":      [],
+    "silence_cnt": 0,
+    "last_trig":   0.0,
+    "rec_start":   0.0,
+    "silence_thr": 0.03,   # overwritten by calibrate_silence()
+    "oww":         None,   # openWakeWord model, set in main()
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  AUDIO CALLBACK  — called by sounddevice every 80 ms on its own thread
+#  AUDIO CALLBACK  — sounddevice calls this every 80ms on its own thread
 # ══════════════════════════════════════════════════════════════════════════════
 
 def audio_callback(indata, _frames, _time_info, _status):
     """
-    Core of the pipeline. Keep this fast — no Whisper, no file I/O, no print.
-    Use msg_queue to hand work to the main thread.
-
     State machine:
-      idle      → run openWakeWord on each chunk
-                  if score ≥ threshold: switch to "recording"
-      recording → accumulate chunks
-                  if silence_cnt ≥ limit OR chunk count ≥ max: send audio to main
+      idle      → detect wake word → switch to "recording"
+      recording → accumulate chunks → send to main thread when done
+    Keep this fast: no Whisper, no Ollama, no file I/O.
     """
     if stop_event.is_set():
         return
@@ -190,21 +191,15 @@ def audio_callback(indata, _frames, _time_info, _status):
     level = rms(chunk)
 
     if _cb["mode"] == "idle":
-        preds = _cb["oww"].predict(chunk)
-        score = preds.get(WAKE_WORD, 0.0)
+        score = _cb["oww"].predict(chunk).get(WAKE_WORD, 0.0)
         now   = time.time()
         if score >= WAKE_THRESHOLD and (now - _cb["last_trig"]) > 1.0:
             _cb.update(mode="recording", chunks=[], silence_cnt=0,
                        last_trig=now, rec_start=now)
             msg_queue.put(("wake", score))
-
-    else:  # recording
+    else:
         _cb["chunks"].append(chunk)
-        if level <= _cb["silence_thr"]:
-            _cb["silence_cnt"] += 1
-        else:
-            _cb["silence_cnt"] = 0
-
+        _cb["silence_cnt"] = _cb["silence_cnt"] + 1 if level <= _cb["silence_thr"] else 0
         if _cb["silence_cnt"] >= _SILENCE_CHUNKS or len(_cb["chunks"]) >= _MAX_CHUNKS:
             audio    = np.concatenate(_cb["chunks"])
             duration = time.time() - _cb["rec_start"]
@@ -213,45 +208,36 @@ def audio_callback(indata, _frames, _time_info, _status):
             msg_queue.put(("audio", audio, duration))
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  RECORDING SPINNER  — runs on its own daemon thread while recording
+#  RECORDING SPINNER  — shows elapsed time while mic is open
 # ══════════════════════════════════════════════════════════════════════════════
 
 def recording_spinner(stop_spin: threading.Event):
-    """Print a live spinner + elapsed time while recording is active."""
     frames = ["◐", "◓", "◑", "◒"]
     start  = time.time()
     i = 0
     while not stop_spin.is_set():
-        elapsed = time.time() - start
-        print(f"\r  {frames[i % 4]} Recording…  {elapsed:.1f}s", end="", flush=True)
+        print(f"\r  {frames[i % 4]} Recording…  {time.time() - start:.1f}s",
+              end="", flush=True)
         i += 1
         time.sleep(0.2)
-    print("\r" + " " * 30 + "\r", end="", flush=True)  # clear spinner line
+    print("\r" + " " * 32 + "\r", end="", flush=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TRANSCRIBE
+#  TRANSCRIBE  — Whisper converts raw audio -> text
 # ══════════════════════════════════════════════════════════════════════════════
 
 def transcribe(audio: np.ndarray, model) -> str:
-    """
-    Convert raw int16 audio → text via Whisper.
-    Writes a temp WAV (Whisper needs a file), transcribes, then deletes it.
-    Returns empty string on failure.
-    """
     if len(audio) < SAMPLE_RATE * MIN_SPEECH_SEC:
         return ""
-
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         tmp = f.name
-
     try:
         with wave.open(tmp, "w") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)
             wf.setframerate(SAMPLE_RATE)
             wf.writeframes(audio.tobytes())
-        result = model.transcribe(tmp, language="en", fp16=False)
-        return result["text"].strip()
+        return model.transcribe(tmp, language="en", fp16=False)["text"].strip()
     except Exception as e:
         print(style(f"\n  [Whisper error] {e}", RED))
         return ""
@@ -259,63 +245,108 @@ def transcribe(audio: np.ndarray, model) -> str:
         os.unlink(tmp)
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  ASK JARVIS  — sends text to Ollama, streams response to terminal
+# ══════════════════════════════════════════════════════════════════════════════
+
+def ask_jarvis(text: str, history: list) -> str:
+    """
+    Append the user's message to history, send the whole conversation to
+    Ollama, and stream the response token-by-token to the terminal.
+    Returns the full response text (also appended to history for context).
+    """
+    history.append({"role": "user", "content": text})
+
+    print(style("\n  Jarvis: ", CYAN, BOLD), end="", flush=True)
+
+    full_response = ""
+    try:
+        stream = ollama.chat(model=OLLAMA_MODEL, messages=history, stream=True)
+        for chunk in stream:
+            token = chunk["message"]["content"]
+            print(token, end="", flush=True)
+            full_response += token
+        print("\n")
+    except ollama.ResponseError as e:
+        print(style(f"\n  [Ollama error] {e}", RED))
+        print(style(f"  Make sure the model is pulled: ollama pull {OLLAMA_MODEL}", YELLOW))
+    except Exception as e:
+        print(style(f"\n  [Ollama error] {e}", RED))
+        print(style("  Is Ollama running? Run: ollama serve", YELLOW))
+
+    if full_response:
+        history.append({"role": "assistant", "content": full_response})
+
+    return full_response
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
     if WAKE_WORD not in AVAILABLE_WORDS:
-        print(style(f"\n  '{WAKE_WORD}' is not supported. Options: {', '.join(AVAILABLE_WORDS)}\n", YELLOW))
+        print(style(f"\n  '{WAKE_WORD}' not supported. Options: {', '.join(AVAILABLE_WORDS)}\n", YELLOW))
         sys.exit(1)
 
     word_display = WAKE_WORD.replace("_", " ").upper()
 
     # ── Header ────────────────────────────────────────────────────────────────
-    print(style("\n  ◉  JARVIS — Voice Demo", BOLD, CYAN))
+    print(style("\n  ◉  JARVIS", BOLD, CYAN))
     print(style("  " + "─" * 44, DIM))
-    print(f"  Wake word  : {style(word_display, BOLD)}")
-    print(f"  Whisper    : {style(WHISPER_MODEL, BOLD)}")
-    print(f"  Threshold  : {style(str(WAKE_THRESHOLD), BOLD)}")
-    print(f"  Exit phrase: {style(EXIT_PHRASE.upper(), BOLD)}")
+    print(f"  Wake word : {style(word_display, BOLD)}")
+    print(f"  AI model  : {style(OLLAMA_MODEL, BOLD)}  (via Ollama)")
+    print(f"  Whisper   : {style(WHISPER_MODEL, BOLD)}")
+    print(f"  Exit      : {style(EXIT_PHRASE.upper(), BOLD)}")
     print(style("  " + "─" * 44, DIM) + "\n")
 
-    # ── Step 1: Calibrate mic ─────────────────────────────────────────────────
-    # Must happen before the main stream opens (can't have two streams open)
+    # ── Calibrate mic ─────────────────────────────────────────────────────────
     silence_thr = calibrate_silence()
     _cb["silence_thr"] = silence_thr
 
-    # ── Step 2: Load Whisper ──────────────────────────────────────────────────
+    # ── Load Whisper ──────────────────────────────────────────────────────────
     print(style(f"  Loading Whisper [{WHISPER_MODEL}]…", DIM))
     stt_model = whisper.load_model(WHISPER_MODEL)
-    print(style("  Whisper ready.\n", GREEN))
+    print(style("  Whisper ready.", GREEN))
 
-    # ── Step 3: Load openWakeWord ─────────────────────────────────────────────
+    # ── Load openWakeWord ─────────────────────────────────────────────────────
     print(style("  Checking wake word models…", DIM))
     openwakeword.utils.download_models()
-    print(style(f"  Loading [{WAKE_WORD}]…", DIM))
     _cb["oww"] = Model(wakeword_models=[WAKE_WORD], inference_framework="onnx")
-    print(style("  Detector ready.\n", GREEN))
+    print(style("  Wake word detector ready.", GREEN))
+
+    # ── Check Ollama is reachable (fast — no model loading) ──────────────────
+    print(style(f"  Checking Ollama [{OLLAMA_MODEL}]…", DIM))
+    try:
+        available = [m.model for m in ollama.list().models]
+        # Ollama stores models as "llama3.2:latest" so check with/without tag
+        found = any(OLLAMA_MODEL in m for m in available)
+        if not found:
+            print(style(f"  Model '{OLLAMA_MODEL}' not found locally.", RED))
+            print(style(f"  Run: ollama pull {OLLAMA_MODEL}", YELLOW))
+            sys.exit(1)
+        print(style("  Ollama ready.\n", GREEN))
+    except Exception as e:
+        print(style(f"  Cannot reach Ollama: {e}", RED))
+        print(style("  Run: ollama serve  (in a separate terminal)\n", YELLOW))
+        sys.exit(1)
+
+    # ── Conversation history (keeps context across exchanges) ─────────────────
+    history = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     # ── Ctrl+C handler ────────────────────────────────────────────────────────
     def _sigint(_s, _f):
-        print(style("\n\n  Interrupt — shutting down…", DIM))
+        print(style("\n\n  Shutting down…", DIM))
         stop_event.set()
     signal.signal(signal.SIGINT, _sigint)
 
-    # ── Ready ─────────────────────────────────────────────────────────────────
-    print(style(f'  Say "{word_display}" to activate', BOLD))
+    print(style(f'  Say "{word_display}" then ask anything', BOLD))
     print(style(f'  Say "{EXIT_PHRASE.upper()}" to quit\n', DIM))
 
-    spin_stop: threading.Event | None = None
+    spin_stop:   threading.Event  | None = None
     spin_thread: threading.Thread | None = None
 
-    # ── Open audio stream (callback-based, non-blocking) ──────────────────────
-    with sd.InputStream(
-        samplerate=SAMPLE_RATE,
-        channels=1,
-        dtype="int16",
-        blocksize=CHUNK_SIZE,
-        callback=audio_callback,
-    ):
+    # ── Main loop ─────────────────────────────────────────────────────────────
+    with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="int16",
+                        blocksize=CHUNK_SIZE, callback=audio_callback):
         while not stop_event.is_set():
             try:
                 msg = msg_queue.get(timeout=0.2)
@@ -324,55 +355,46 @@ def main():
 
             kind = msg[0]
 
-            # ── Wake word fired ───────────────────────────────────────────────
             if kind == "wake":
                 _, score = msg
                 ts = time.strftime("%H:%M:%S")
                 print(style(f"  [{ts}] ", DIM)
                       + style("● REC", GREEN, BOLD)
                       + style(f"  confidence {score:.0%}", DIM))
-
-                # Start spinner on its own thread so it can run while
-                # the main thread waits for the next queue message
                 spin_stop   = threading.Event()
                 spin_thread = threading.Thread(
-                    target=recording_spinner, args=(spin_stop,), daemon=True
-                )
+                    target=recording_spinner, args=(spin_stop,), daemon=True)
                 spin_thread.start()
 
-            # ── Recording finished ────────────────────────────────────────────
             elif kind == "audio":
                 _, audio, duration = msg
 
-                # Stop spinner
-                if spin_stop:
-                    spin_stop.set()
-                if spin_thread:
-                    spin_thread.join(timeout=0.5)
+                if spin_stop:   spin_stop.set()
+                if spin_thread: spin_thread.join(timeout=0.5)
 
                 if len(audio) < SAMPLE_RATE * MIN_SPEECH_SEC:
                     print(style("  (too short — try again)\n", DIM))
-                    print(style(f'  Waiting for "{word_display}"…\n', DIM))
                     continue
 
+                # Transcribe
                 print(style(f"  Captured {duration:.1f}s — transcribing…", DIM))
                 text = transcribe(audio, stt_model)
 
                 if not text:
                     print(style("  (nothing transcribed — try again)\n", YELLOW))
-                    print(style(f'  Waiting for "{word_display}"…\n', DIM))
                     continue
 
-                # ── Print what you said ───────────────────────────────────────
-                print(style("\n  ┌─────────────────────────────────────────────", CYAN))
-                print(style("  │  You said: ", CYAN) + style(f'"{text}"', BOLD))
-                print(style("  └─────────────────────────────────────────────\n", CYAN))
+                # Print what you said
+                print(style("  You: ", DIM) + style(f'"{text}"', BOLD))
 
-                # ── Check exit phrase (punctuation-stripped comparison) ────────
+                # Check for exit phrase before sending to Ollama
                 if EXIT_PHRASE in normalize(text):
-                    print(style("  Goodbye!\n", GREEN, BOLD))
+                    ask_jarvis("The user is saying goodbye. Say a brief farewell.", history)
                     stop_event.set()
                     break
+
+                # Ask Ollama and stream the response
+                ask_jarvis(text, history)
 
                 print(style(f'  Waiting for "{word_display}"…\n', DIM))
 
