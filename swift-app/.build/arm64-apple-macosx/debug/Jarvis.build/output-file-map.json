@@ -1,0 +1,35 @@
+{
+  "": {
+    "swift-dependencies": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/master.swiftdeps"
+  },
+  "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/ContentView.swift": {
+    "dependencies": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/ContentView.d",
+    "object": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/ContentView.swift.o",
+    "swiftmodule": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/ContentView~partial.swiftmodule",
+    "swift-dependencies": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/ContentView.swiftdeps"
+  },
+  "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/IslandPanel.swift": {
+    "dependencies": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/IslandPanel.d",
+    "object": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/IslandPanel.swift.o",
+    "swiftmodule": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/IslandPanel~partial.swiftmodule",
+    "swift-dependencies": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/IslandPanel.swiftdeps"
+  },
+  "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/JarvisApp.swift": {
+    "dependencies": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/JarvisApp.d",
+    "object": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/JarvisApp.swift.o",
+    "swiftmodule": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/JarvisApp~partial.swiftmodule",
+    "swift-dependencies": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/JarvisApp.swiftdeps"
+  },
+  "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/Models.swift": {
+    "dependencies": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/Models.d",
+    "object": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/Models.swift.o",
+    "swiftmodule": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/Models~partial.swiftmodule",
+    "swift-dependencies": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/Models.swiftdeps"
+  },
+  "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/VoiceViewModel.swift": {
+    "dependencies": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/VoiceViewModel.d",
+    "object": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/VoiceViewModel.swift.o",
+    "swiftmodule": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/VoiceViewModel~partial.swiftmodule",
+    "swift-dependencies": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/VoiceViewModel.swiftdeps"
+  }
+}
