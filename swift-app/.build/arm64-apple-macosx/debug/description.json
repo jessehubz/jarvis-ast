@@ -40,6 +40,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/ProgressOverlay.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/VoiceViewModel.swift"
         },
         {
@@ -59,6 +63,7 @@
         "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/IslandPanel.swift.o",
         "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/JarvisApp.swift.o",
         "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/Models.swift.o",
+        "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/ProgressOverlay.swift.o",
         "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/VoiceViewModel.swift.o"
       ],
       "otherArguments" : [
@@ -132,6 +137,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/ProgressOverlay.swift.o"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/VoiceViewModel.swift.o"
         },
         {
@@ -145,6 +154,7 @@
         "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/IslandPanel.swift",
         "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/JarvisApp.swift",
         "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/Models.swift",
+        "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/ProgressOverlay.swift",
         "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/VoiceViewModel.swift"
       ],
       "tempsPath" : "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build",
@@ -167,6 +177,7 @@
       "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/IslandPanel.swift",
       "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/JarvisApp.swift",
       "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/Models.swift",
+      "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/ProgressOverlay.swift",
       "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/VoiceViewModel.swift",
       "-I",
       "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Modules",
@@ -277,6 +288,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/ProgressOverlay.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/VoiceViewModel.swift"
         }
       ],
@@ -304,6 +319,10 @@
         {
           "kind" : "file",
           "name" : "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/Models.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/ProgressOverlay.swift.o"
         },
         {
           "kind" : "file",

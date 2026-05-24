@@ -114,6 +114,14 @@ final class VoiceViewModel: NSObject, ObservableObject, URLSessionWebSocketDeleg
     @Published var statusText = "Connecting to voice server…"
     @Published var mode: Mode  = .offline
 
+    // Task automation state
+    @Published var taskActive      = false
+    @Published var taskId          = ""
+    @Published var taskName        = ""
+    @Published var taskSteps: [TaskStep]   = []
+    @Published var taskPreviewImage: String? = nil
+    @Published var recentTasks: [RecentTask] = []
+
     private var wsTask:  URLSessionWebSocketTask?
     private var session: URLSession!
     let speaker = JarvisSpeaker()
@@ -199,6 +207,10 @@ final class VoiceViewModel: NSObject, ObservableObject, URLSessionWebSocketDeleg
 
     func sendText(_ text: String) {
         send(["type": "text", "text": text])
+    }
+
+    func cancelTask() {
+        send(["type": "cancel_task"])
     }
 
     // MARK: - URLSessionWebSocketDelegate
@@ -319,6 +331,55 @@ final class VoiceViewModel: NSObject, ObservableObject, URLSessionWebSocketDeleg
                 generationComplete = false
                 send(["type": "tts_done"])
             }
+
+        case "task_start":
+            guard let tid   = json["task_id"]   as? String,
+                  let tname = json["task_name"]  as? String,
+                  let raw   = json["steps"]      as? [[String: Any]] else { break }
+            taskId    = tid
+            taskName  = tname
+            taskSteps = raw.map { s in
+                TaskStep(id:   s["id"]   as? String ?? UUID().uuidString,
+                         name: s["name"] as? String ?? "Step")
+            }
+            taskPreviewImage = nil
+            taskActive = true
+
+        case "task_step_start":
+            guard let stepId = json["step_id"] as? String else { break }
+            if let i = taskSteps.firstIndex(where: { $0.id == stepId }) {
+                taskSteps[i].status = .active
+            }
+
+        case "task_step_done":
+            guard let stepId = json["step_id"] as? String else { break }
+            if let i = taskSteps.firstIndex(where: { $0.id == stepId }) {
+                taskSteps[i].status  = .done
+                taskSteps[i].message = json["message"] as? String ?? ""
+            }
+
+        case "task_step_error":
+            guard let stepId = json["step_id"] as? String else { break }
+            if let i = taskSteps.firstIndex(where: { $0.id == stepId }) {
+                taskSteps[i].status  = .failed
+                taskSteps[i].message = json["message"] as? String ?? ""
+            }
+
+        case "task_preview":
+            if let img = json["image"] as? String { taskPreviewImage = img }
+
+        case "task_complete":
+            recentTasks.insert(RecentTask(name: taskName, completedAt: Date(), success: true), at: 0)
+            if recentTasks.count > 10 { recentTasks.removeLast() }
+            taskActive = false
+
+        case "task_error":
+            recentTasks.insert(RecentTask(name: taskName, completedAt: Date(), success: false), at: 0)
+            if recentTasks.count > 10 { recentTasks.removeLast() }
+            taskActive = false
+
+        case "task_cancelled":
+            taskActive = false
 
         default: break
         }

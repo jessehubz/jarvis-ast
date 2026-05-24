@@ -6,3 +6,5 @@ onnxruntime>=1.16.0
 python-dotenv>=1.0.0
 ollama>=0.2.0
 websockets>=13.0
+pyobjc-framework-Quartz>=10.0
+pyobjc-framework-AppKit>=10.0

@@ -39,7 +39,11 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 import wave
+
+import automation_engine
+import task_planner
 
 import numpy as np
 import sounddevice as sd
@@ -64,10 +68,13 @@ log = logging.getLogger("jarvis")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-WHISPER_MODEL  = os.getenv("WHISPER_MODEL",    "base")
+# Set WHISPER_MODEL=tiny for ~4x faster transcription (slightly less accurate)
+WHISPER_MODEL  = os.getenv("WHISPER_MODEL",    "tiny")
 WAKE_THRESHOLD = float(os.getenv("WAKE_THRESHOLD", "0.35"))
 OLLAMA_MODEL   = os.getenv("OLLAMA_MODEL",     "llama3.2")
 WS_PORT        = int(os.getenv("JARVIS_WS_PORT", "8765"))
+# Set ENABLE_AUTOMATION=0 to disable desktop automation (faster if you don't need it)
+ENABLE_AUTOMATION = os.getenv("ENABLE_AUTOMATION", "1") == "1"
 
 _raw       = os.getenv("JARVIS_WAKE_WORDS", "hey_jarvis")
 WAKE_WORDS = [w.strip() for w in _raw.split(",") if w.strip()]
@@ -84,7 +91,7 @@ WAKE_COOLDOWN       = 1.5        # min seconds between wake triggers
 
 # Conversation
 CONVERSATION_TIMEOUT = 90.0      # auto-exit conversation after this much silence
-MAX_HISTORY_TURNS    = 20        # keep last N user+assistant pairs (prevents context bloat)
+MAX_HISTORY_TURNS    = 8         # keep last N user+assistant pairs (prevents context bloat)
 
 # TTS
 TTS_COOLDOWN = 0.8  # seconds after TTS ends before VAD re-opens the mic.
@@ -111,6 +118,23 @@ _BG_PATTERN = re.compile(
     r"i was telling|she said|he said|they said)\b",
     re.IGNORECASE,
 )
+
+# Keyword pre-filter: only call the Ollama automation planner when the message
+# contains at least one action verb.  Avoids an expensive LLM round-trip for
+# the vast majority of conversational messages.
+_AUTOMATION_GATE = re.compile(
+    r"\b(open|close|launch|quit|start|type|write|click|press|search|find|"
+    r"go to|navigate|browse|screenshot|take a screenshot|move|copy|delete|"
+    r"rename|create|make|show|display|get|fetch|download|run|execute|"
+    r"play|pause|stop|mute|volume|zoom|minimize|maximize|switch|focus|"
+    r"activate|email|calendar|reminder|alarm|note|file|folder|app|window)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_possibly_automation(text: str) -> bool:
+    return bool(_AUTOMATION_GATE.search(text))
+
 
 # ── WebSocket broadcast ───────────────────────────────────────────────────────
 
@@ -150,6 +174,8 @@ def is_exit(text: str) -> bool:
         or "goodbye jarvis" in n
         or "stop listening" in n
         or "go to sleep"    in n
+        or "end session"    in n
+        or n.strip()        == "stop"
     )
 
 
@@ -247,6 +273,120 @@ _state = {
     "pipeline_runs":    0,
     "dbg_count":        0,
 }
+
+# ── Task state ────────────────────────────────────────────────────────────────
+
+_task_state = {
+    "active":  False,
+    "task_id": "",
+    "cancel":  threading.Event(),
+}
+
+# ── Task execution ────────────────────────────────────────────────────────────
+
+def _run_task(task_id: str, plan: dict):
+    """Execute a task plan. Runs in a daemon thread; does NOT hold _llm_lock."""
+    steps = plan.get("steps", [])
+    _task_state["active"]  = True
+    _task_state["task_id"] = task_id
+    _task_state["cancel"].clear()
+
+    # Remember the user's active app and current space so we can restore after.
+    original_app = automation_engine.get_frontmost_app()
+    log.debug("[TASK] saving focus: '%s'", original_app)
+
+    emit("task_start",
+         task_id=task_id,
+         task_name=plan.get("task_name", "Task"),
+         steps=[{"id": s["id"], "name": s["name"]} for s in steps],
+         estimated_seconds=plan.get("estimated_seconds", 0))
+
+    # Switch to Desktop 2 so the task runs isolated from the user's workspace.
+    switched_space = False
+    ok_space, _ = automation_engine.switch_space(2)
+    if ok_space:
+        switched_space = True
+        log.info("[TASK] switched to Desktop 2")
+    else:
+        log.warning("[TASK] could not switch to Desktop 2 — running in current space")
+
+    success = True
+    try:
+        for step in steps:
+            if _task_state["cancel"].is_set():
+                break
+
+            emit("task_step_start", task_id=task_id, step_id=step["id"])
+            ok, msg = automation_engine.execute_step(step)
+
+            if step.get("action") == "screenshot" and ok:
+                emit("task_preview", task_id=task_id, image=msg)
+                emit("task_step_done", task_id=task_id, step_id=step["id"],
+                     message="Screenshot captured")
+            elif ok:
+                emit("task_step_done", task_id=task_id, step_id=step["id"],
+                     message=msg or "Done")
+            else:
+                emit("task_step_error", task_id=task_id, step_id=step["id"],
+                     message=msg or "Failed")
+                success = False
+                break
+    finally:
+        # Switch back to Desktop 1 and restore focus
+        if switched_space:
+            automation_engine.switch_space(1)
+            log.info("[TASK] returned to Desktop 1")
+        automation_engine.restore_focus(original_app)
+
+    if _task_state["cancel"].is_set():
+        emit("task_cancelled", task_id=task_id)
+    elif success:
+        emit("task_complete", task_id=task_id)
+    else:
+        emit("task_error", task_id=task_id)
+
+    _task_state["active"]  = False
+    _task_state["task_id"] = ""
+
+
+def _try_automation(text: str, emit_heard_text: str | None = None) -> bool:
+    """
+    Detect and launch an automation task.  Must be called while holding _llm_lock.
+    emit_heard_text: if not None, emit "heard" with this text before streaming tokens
+                     (voice path); None means "heard" was already emitted (text path).
+    Returns True if a task was started (caller should skip normal LLM call).
+    """
+    if not ENABLE_AUTOMATION:
+        return False
+    if _task_state["active"]:
+        return False
+    if not _is_possibly_automation(text):   # fast keyword gate — avoids Ollama call
+        return False
+
+    plan = task_planner.plan_automation(text)
+    if not plan.get("is_automation"):
+        return False
+
+    _state["last_interaction"] = time.time()
+    _state["in_conversation"]  = True
+
+    if emit_heard_text is not None:
+        emit("heard", text=emit_heard_text)
+
+    verbal = plan.get("verbal_response", "On it.")
+    emit("token", text=verbal)
+    _state["tts_playing"] = True
+    _state["tts_since"]   = time.time()
+    emit("status", text="Speaking…")
+    emit("done")
+
+    task_id = uuid.uuid4().hex[:8]
+    threading.Thread(
+        target=_run_task, args=(task_id, plan),
+        daemon=True, name="task-executor",
+    ).start()
+    return True
+
 
 # ── Audio callback ────────────────────────────────────────────────────────────
 
@@ -613,6 +753,9 @@ def _text_worker(text: str):
             _state["in_conversation"] = False
             if not _state["tts_playing"]:
                 emit("status", text="Listening…")
+        elif _try_automation(text, emit_heard_text=None):
+            # "heard" was already emitted by the WS handler; automation took over
+            pass
         else:
             _state["in_conversation"] = True
             _state["last_interaction"] = time.time()
@@ -675,6 +818,9 @@ def _voice_worker(audio: np.ndarray, stt):
             log.info("○ Conversation ended")
             if not _state["tts_playing"]:
                 emit("status", text="Listening…")
+            return
+
+        if _try_automation(text, emit_heard_text=text):
             return
 
         handle_text(text, _history)
@@ -758,6 +904,11 @@ async def _ws_handler(websocket):
                              TTS_COOLDOWN, _state["in_conversation"], _state["busy"])
                     if not _state["busy"]:
                         emit("status", text="Listening…")
+
+                elif t == "cancel_task":
+                    if _task_state["active"]:
+                        _task_state["cancel"].set()
+                        log.info("[TASK] cancel requested")
 
                 elif t == "stop":
                     stop_event.set()

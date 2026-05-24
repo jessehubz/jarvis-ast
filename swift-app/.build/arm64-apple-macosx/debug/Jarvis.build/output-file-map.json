@@ -26,6 +26,12 @@
     "swiftmodule": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/Models~partial.swiftmodule",
     "swift-dependencies": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/Models.swiftdeps"
   },
+  "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/ProgressOverlay.swift": {
+    "dependencies": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/ProgressOverlay.d",
+    "object": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/ProgressOverlay.swift.o",
+    "swiftmodule": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/ProgressOverlay~partial.swiftmodule",
+    "swift-dependencies": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/ProgressOverlay.swiftdeps"
+  },
   "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/Sources/VoiceViewModel.swift": {
     "dependencies": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/VoiceViewModel.d",
     "object": "/Users/davidfrancisco/Documents/2026-side-proj/jarvis-ast/swift-app/.build/arm64-apple-macosx/debug/Jarvis.build/VoiceViewModel.swift.o",
