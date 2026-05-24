@@ -115,7 +115,7 @@ cd jarvis-ast
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r server/requirements.txt
 ```
 
 > First install takes a few minutes — `onnxruntime` and `faster-whisper` are large packages.
@@ -149,7 +149,7 @@ Open **two terminals** from the project root.
 **Terminal 1 — voice server**
 ```bash
 source .venv/bin/activate
-python voice_server.py
+python server/voice_server.py
 ```
 
 Wait for this line before starting the app:
@@ -255,13 +255,16 @@ JARVIS_WS_PORT=8765
 ```
 jarvis-ast/
 │
-├── voice_server.py        # Audio capture, VAD, wake word, STT, LLM, WebSocket server
-├── task_planner.py        # Detects automation intent, generates step plans via Ollama JSON mode
-├── automation_engine.py   # Executes steps via AppleScript / osascript
-├── requirements.txt       # Python dependencies
-├── .env                   # Your local config (create this — not committed)
+├── .env                          # Your local config (create this — not committed)
+├── .env.example                  # Config template
 │
-└── swift-app/
+├── server/                       # Python voice + automation backend
+│   ├── voice_server.py           # Audio capture, VAD, wake word, STT, LLM, WebSocket server
+│   ├── task_planner.py           # Detects automation intent, generates step plans
+│   ├── automation_engine.py      # Executes steps via AppleScript / osascript
+│   └── requirements.txt          # Python dependencies
+│
+└── swift-app/                    # macOS app (SwiftUI)
     └── Sources/
         ├── JarvisApp.swift        # App entry point, menu bar item, window lifecycle
         ├── IslandPanel.swift      # Floating island overlay + hover-expand animation
@@ -300,7 +303,7 @@ These are the actions the task planner can compose into a plan:
 - **Automation detection** uses a keyword regex gate before calling Ollama — purely conversational messages never hit the planner, so there's no extra latency for normal chat.
 - **Desktop 2 switching** adds ~0.4s at the start and end of each task. If you don't need isolation, set `ENABLE_AUTOMATION=0` and re-enable per-task via direct AppleScript if needed.
 - **Ollama speed** depends heavily on your hardware. On M-series Macs, Llama 3.2 3B runs comfortably in real time. Larger models (7B+) add noticeable latency.
-- The **conversation history** is capped at 8 turns to keep context small and LLM calls fast. Adjust `MAX_HISTORY_TURNS` in `voice_server.py` if needed.
+- The **conversation history** is capped at 8 turns to keep context small and LLM calls fast. Adjust `MAX_HISTORY_TURNS` in `server/voice_server.py` if needed.
 
 ---
 
@@ -357,7 +360,7 @@ These are the actions the task planner can compose into a plan:
 
 - Confirm the Swift build succeeded: `cd swift-app && swift build`
 - Make sure the Python voice server is running — the Swift app connects on launch and won't show the island until the WebSocket is available
-- Check the terminal running `voice_server.py` for any Python errors
+- Check the terminal running `server/voice_server.py` for any Python errors
 
 </details>
 
